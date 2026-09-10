@@ -71,18 +71,28 @@ with enough digits to come back bit-for-bit in every format.
 
 These total about 163 MB. The SuperPoint vocabulary is 117 MB, past GitHub's
 100 MB per-file limit, so it is committed as 45 MiB chunks named
-`superpoint_voc.yml.gz.part00` and upward. Reassemble it once after cloning:
+`superpoint_voc.yml.gz.part00` and upward.
+
+Nothing needs doing by hand. `cmake/JoinVocabulary.cmake` runs at configure
+time and reassembles the archive, so a fresh clone builds as it always did.
+The join is skipped once the file is in place, and needs CMake 3.18 or newer
+for `cmake -E cat`. Turn it off with `-DSLAMCPP_JOIN_VOCABULARY=OFF`.
+
+For a checkout that is not being configured, the same job by hand:
 
     ./scripts/join_vocabulary.sh
 
-The script concatenates the chunks, checks the result against a known SHA-256,
-and is a no-op once the archive is in place. The joined file is gitignored, so
-it will not be committed back. To re-split after replacing the vocabulary:
+Both read the expected digest from `superpoint_voc.yml.gz.sha256` and refuse
+to leave a file that does not match it. Both write to a temporary and rename,
+so an interrupted run cannot leave a truncated archive that later looks whole.
+The joined file is gitignored and will not be committed back.
+
+To re-split after replacing the vocabulary:
 
     cd resources/vocabulary
+    sha256sum superpoint_voc.yml.gz > superpoint_voc.yml.gz.sha256
+    rm -f superpoint_voc.yml.gz.part*
     split -b 45M -d superpoint_voc.yml.gz superpoint_voc.yml.gz.part
-
-then update the expected checksum in the script.
 
 ## Tests
 

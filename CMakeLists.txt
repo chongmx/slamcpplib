@@ -53,6 +53,21 @@ if(SLAMCPP_WITH_SUPERPOINT)
 endif()
 
 # ---------------------------------------------------------------------------
+# Resources.
+#
+# The SuperPoint vocabulary is committed in chunks because it is over GitHub's
+# 100 MB per-file limit. Join it here so a fresh clone needs no manual step.
+# ---------------------------------------------------------------------------
+option(SLAMCPP_JOIN_VOCABULARY
+       "Reassemble the chunked SuperPoint vocabulary at configure time" ON)
+
+if(SLAMCPP_JOIN_VOCABULARY)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/JoinVocabulary.cmake)
+    slamcpp_join_vocabulary(
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/vocabulary/superpoint_voc.yml.gz)
+endif()
+
+# ---------------------------------------------------------------------------
 # Vendored dependencies.
 #
 # Both are built as ordinary in-tree targets and linked by target name. The
