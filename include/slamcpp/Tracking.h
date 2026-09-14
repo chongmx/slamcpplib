@@ -31,6 +31,7 @@
 #include "slamcpp/ORBVocabulary.h"
 #include "slamcpp/KeyFrameDatabase.h"
 #include "slamcpp/ORBextractor.h"
+#include "slamcpp/features/FeatureFactory.h"
 #include "slamcpp/System.h"
 #include "slamcpp/ImuTypes.h"
 #include "slamcpp/Settings.h"
@@ -257,8 +258,12 @@ protected:
     LoopClosing* mpLoopClosing;
 
     //ORB
-    ORBextractor* mpORBextractorLeft, *mpORBextractorRight;
-    ORBextractor* mpIniORBextractor;
+    FeatureExtractor* mpORBextractorLeft, *mpORBextractorRight;
+    FeatureExtractor* mpIniORBextractor;
+
+    // Which front-end this session runs, from Frontend.type in the settings.
+    FrontendType mFrontendType = FrontendType::ORB;
+    std::string  mFrontendModelPath;
 
     //BoW
     ORBVocabulary* mpORBVocabulary;

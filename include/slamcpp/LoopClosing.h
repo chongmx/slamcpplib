@@ -29,11 +29,14 @@
 #include "slamcpp/KeyFrameDatabase.h"
 
 #include <thread>
+#include <memory>
 #include <mutex>
 #include "3rdparty/g2o/g2o/types/types_seven_dof_expmap.h"
 
 namespace ORB_SLAM3
 {
+
+class PlaceRecognition;
 
 class Tracking;
 class LocalMapping;
@@ -44,6 +47,8 @@ class Map;
 class LoopClosing
 {
 public:
+
+    void SetPlaceRecognition(std::shared_ptr<PlaceRecognition> pPlaceRecognition);
 
     typedef pair<set<KeyFrame*>,int> ConsistentGroup;    
     typedef map<KeyFrame*,g2o::Sim3,std::less<KeyFrame*>,
@@ -159,6 +164,11 @@ protected:
     Tracking* mpTracker;
 
     KeyFrameDatabase* mpKeyFrameDB;
+
+    // Optional learned place recognition. Null unless a model was named in the
+    // settings, in which case its candidates are merged with the bag-of-words
+    // ones rather than replacing them.
+    std::shared_ptr<PlaceRecognition> mpPlaceRecognition;
     ORBVocabulary* mpORBVocabulary;
 
     LocalMapping *mpLocalMapper;

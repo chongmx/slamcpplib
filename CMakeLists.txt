@@ -43,6 +43,16 @@ option(SLAMCPP_WITH_SUPERPOINT "Build the SuperPoint front-end (needs libtorch)"
 
 set(SLAMCPP_SUPERPOINT_ENABLED OFF)
 if(SLAMCPP_WITH_SUPERPOINT)
+    # libtorch 2.7 still asks for CUDA::nvToolsExt, which the CUDA 13 toolkit
+    # removed when NVTX moved to the header-only NVTX3. Without this shim the
+    # generate step fails outright on a machine with a newer toolkit than the
+    # one libtorch was built against. NVTX carries profiler annotations only,
+    # so an empty interface target costs nothing at run time.
+    find_package(CUDAToolkit QUIET)
+    if(NOT TARGET CUDA::nvToolsExt)
+        add_library(CUDA::nvToolsExt INTERFACE IMPORTED)
+    endif()
+
     find_package(Torch QUIET)
     if(Torch_FOUND)
         set(SLAMCPP_SUPERPOINT_ENABLED ON)
@@ -112,6 +122,14 @@ target_compile_options(slamcpp_dbow3 PRIVATE -w)
 # ---------------------------------------------------------------------------
 file(GLOB SLAMCPP_SOURCES CONFIGURE_DEPENDS src/*.cc src/*.cpp src/CameraModels/*.cpp)
 
+# The SuperPoint front-end. Every file under src/features needs libtorch, so
+# the whole directory is conditional and the ORB path is unaffected by its
+# absence.
+file(GLOB SLAMCPP_SUPERPOINT_SOURCES CONFIGURE_DEPENDS src/features/*.cc)
+if(SLAMCPP_SUPERPOINT_ENABLED)
+    list(APPEND SLAMCPP_SOURCES ${SLAMCPP_SUPERPOINT_SOURCES})
+endif()
+
 add_library(slamcpp STATIC ${SLAMCPP_SOURCES})
 
 # The root of the tree is on the path because the public headers include their
@@ -144,10 +162,99 @@ target_link_libraries(slamcpp
 target_compile_features(slamcpp PUBLIC cxx_std_17)
 set_target_properties(slamcpp PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# ---------------------------------------------------------------------------
+# Calibration module
+#
+# A port of ethz-asl/kalibr into this library, so that one target covers both
+# calibrating a rig and tracking with it. See docs/kalibr/ at the repository
+# root for the analysis and the phased plan.
+#
+# Built as its own static library rather than folded into the slamcpp glob,
+# for two reasons. It is new code held to -Werror, which the inherited SLAM
+# core could not survive. And its layers land over several phases, so listing
+# sources explicitly keeps a half-finished layer from being picked up by a
+# glob before it compiles.
+#
+# It is still linked into slamcpp PUBLIC, so a consumer sees one target.
+# ---------------------------------------------------------------------------
+option(SLAMCPP_BUILD_CALIBRATION "Build the calibration module" ON)
+option(SLAMCPP_CALIB_WITH_SUITESPARSE
+       "Use SuiteSparse/CHOLMOD for the calibration sparse solves" OFF)
+
+if(SLAMCPP_BUILD_CALIBRATION)
+    # Phase 1 adds kinematics, linalg, backend and expressions; Phase 2 adds
+    # splines, cameras, targets, apriltag and imu; Phase 5 adds pipelines.
+    add_library(slamcpp_calib STATIC
+        src/calibration/core/Image.cpp
+        src/calibration/core/Logging.cpp
+        src/calibration/core/Random.cpp
+        src/calibration/core/Statistics.cpp
+        src/calibration/core/Timestamp.cpp
+        src/calibration/cameras/PinholeHelpers.cpp
+        src/calibration/cameras/PinholeInitializer.cpp
+    )
+
+    # Not SYSTEM, unlike the includes on slamcpp itself: this is our code and
+    # we want to hear its warnings.
+    target_include_directories(slamcpp_calib PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_include_directories(slamcpp_calib SYSTEM PUBLIC ${EIGEN3_INCLUDE_DIR})
+    target_compile_features(slamcpp_calib PUBLIC cxx_std_17)
+    set_target_properties(slamcpp_calib PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+    # Warnings are errors in the module. Ported estimation code that trips a
+    # real warning is a bug worth stopping for, and enforcing this from the
+    # first file is far cheaper than retrofitting it across the ~45,000 lines
+    # the plan carries across.
+    if(MSVC)
+        target_compile_options(slamcpp_calib PRIVATE /W4)
+    else()
+        target_compile_options(slamcpp_calib PRIVATE
+            -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor -Werror)
+    endif()
+
+    if(SLAMCPP_CALIB_WITH_SUITESPARSE)
+        # Phase 1 of the plan keeps CHOLMOD to preserve numerical equivalence
+        # with upstream. Phase 3 adds an Eigen SimplicialLDLT solver behind the
+        # same interface and makes it the default, leaving this as an opt-in so
+        # discrepancies can be bisected against the original numerics.
+        find_package(SuiteSparse REQUIRED)
+        target_link_libraries(slamcpp_calib PUBLIC SuiteSparse::CHOLMOD)
+        target_compile_definitions(slamcpp_calib PUBLIC SLAMCPP_CALIB_WITH_SUITESPARSE=1)
+    endif()
+
+    target_link_libraries(slamcpp PUBLIC slamcpp_calib)
+
+    # Replays upstream's recorded detections through the ported code and
+    # compares the result. Not a unit test: it needs a trace captured from
+    # upstream Kalibr in Docker, which is far too large to commit.
+    add_executable(calib_replay_focal tools/calib_replay_focal.cpp)
+    target_link_libraries(calib_replay_focal PRIVATE slamcpp_calib)
+endif()
+
 if(SLAMCPP_SUPERPOINT_ENABLED)
     target_compile_definitions(slamcpp PUBLIC SLAMCPP_WITH_SUPERPOINT=1)
-    target_link_libraries(slamcpp PUBLIC ${TORCH_LIBRARIES})
+    # --no-as-needed around the CUDA half on purpose. Nothing in this library
+    # names a symbol in libtorch_cuda directly: the GPU backend registers
+    # itself from a static initialiser. With the default --as-needed the linker
+    # drops the library, the registration never runs, and
+    # torch::cuda::is_available() answers false on a machine with a working
+    # GPU, quietly putting SuperPoint on the CPU.
+    target_link_libraries(slamcpp PUBLIC
+        -Wl,--no-as-needed ${TORCH_LIBRARIES} -Wl,--as-needed)
+
+    # libtorch is built against the C++11 ABI in the cxx11-abi distribution and
+    # needs its own flags; TORCH_CXX_FLAGS carries them.
+    if(TORCH_CXX_FLAGS)
+        target_compile_options(slamcpp PUBLIC ${TORCH_CXX_FLAGS})
+    endif()
 endif()
+
+# Where the shipped weights and vocabularies live, so nothing has to be started
+# from a particular working directory to find them.
+target_compile_definitions(slamcpp PUBLIC
+    SLAMCPP_RESOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources")
 
 # The core is inherited code that we are not going to re-warning-clean in one
 # pass. Turned back on deliberately once it is ours.
@@ -193,4 +300,35 @@ if(SLAMCPP_BUILD_TESTS)
     target_link_libraries(test_features PRIVATE slamcpp ${OpenCV_LIBS})
     target_include_directories(test_features PRIVATE tests)
     add_test(NAME features COMMAND test_features "${SLAMCPP_TEST_VOCABULARY}")
+
+    # Calibration module. Self-contained: no vocabulary, no dataset, no
+    # fixture, so it runs anywhere the library builds. The harness is
+    # in-tree and header-only (tests/calibration/TestHarness.hpp); upstream
+    # Kalibr uses gtest via catkin, and fetching it here would make an
+    # offline build impossible and add a dependency the library does not need.
+    if(SLAMCPP_BUILD_CALIBRATION)
+        add_executable(test_calibration
+            tests/calibration/test_main.cpp
+            tests/calibration/test_core.cpp
+            tests/calibration/test_io.cpp
+        )
+        target_link_libraries(test_calibration PRIVATE slamcpp_calib)
+        target_include_directories(test_calibration
+                                   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/calibration)
+        if(NOT MSVC)
+            target_compile_options(test_calibration PRIVATE
+                -Wall -Wextra -Wpedantic -Werror)
+        endif()
+        add_test(NAME calibration COMMAND test_calibration)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+option(SLAMCPP_BUILD_TOOLS "Build slamcpp's command line tools" OFF)
+
+if(SLAMCPP_BUILD_TOOLS)
+    add_executable(convert_vocabulary tools/convert_vocabulary.cpp)
+    target_link_libraries(convert_vocabulary PRIVATE slamcpp)
 endif()

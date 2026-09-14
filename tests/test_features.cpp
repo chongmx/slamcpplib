@@ -422,6 +422,66 @@ int main(int argc, char** argv)
         std::remove(cfg.c_str());
     }
 
+    // -----------------------------------------------------------------------
+    // The SuperPoint front-end, when this build has one. It needs its own
+    // vocabulary: a float tree, because its descriptors are floats. The ORB
+    // vocabulary cannot stand in.
+#if SLAMCPP_WITH_SUPERPOINT
+    std::printf("\nMONOCULAR / SuperPoint\n");
+    {
+        const std::string spVoc = argc > 2
+                                      ? std::string(argv[2])
+                                      : std::string(SLAMCPP_RESOURCE_DIR) +
+                                            "/vocabulary/superpoint_voc.dbow3";
+
+        std::ifstream probe(spVoc, std::ios::binary);
+        if (!probe.good())
+        {
+            std::printf("       skipped: no SuperPoint vocabulary at %s\n", spVoc.c_str());
+            std::printf("       build it with: convert_vocabulary superpoint_voc.yml.gz %s\n",
+                        spVoc.c_str());
+        }
+        else
+        {
+            probe.close();
+            const std::string cfg = writeYaml(
+                "feat_sp.yaml", pinholeIntrinsics() + kOrbAndViewer +
+                                    "Frontend.type: \"SUPERPOINT\"\n");
+
+            Outcome o;
+            try
+            {
+                ORB_SLAM3::System slam(spVoc, cfg, ORB_SLAM3::System::MONOCULAR, false);
+                for (int i = 0; i < kFrames; ++i)
+                {
+                    slam.TrackMonocular(slamcpp_test::renderView(texture, i, kFrames), i / 30.0);
+                    const int st = slam.GetTrackingState();
+                    o.bestState = std::max(o.bestState, st);
+                    if (st == 2)
+                        ++o.okFrames;
+                }
+                o.keyFrames = countKeyFrames(slam.GetAtlas());
+                o.mapPoints = countMapPoints(slam.GetAtlas());
+                slam.Shutdown();
+            }
+            catch (const std::exception& e)
+            {
+                o.threw = true;
+                std::printf("       threw: %s\n", e.what());
+            }
+
+            std::printf("       best=%s ok=%d kf=%ld mp=%ld\n", stateName(o.bestState),
+                        o.okFrames, o.keyFrames, o.mapPoints);
+            check(!o.threw, "the SuperPoint front-end builds and runs");
+            check(o.bestState >= 2, "SuperPoint initialises and tracks");
+            check(o.mapPoints > 50, "SuperPoint triangulates map points");
+            std::remove(cfg.c_str());
+        }
+    }
+#else
+    std::printf("\nMONOCULAR / SuperPoint\n       skipped: built without libtorch\n");
+#endif
+
     std::printf("\n%s (%d of %d checks failed)\n", failures ? "FAILED" : "OK", failures, checks);
     return failures ? 1 : 0;
 }

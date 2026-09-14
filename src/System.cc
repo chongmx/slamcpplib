@@ -21,6 +21,12 @@
 #include "slamcpp/System.h"
 #include "slamcpp/serialization/Archive.h"
 
+#if SLAMCPP_WITH_SUPERPOINT
+#include "slamcpp/ORBmatcher.h"
+#include "slamcpp/features/LightGlue.h"
+#include "slamcpp/features/PlaceRecognition.h"
+#endif
+
 #include <stdexcept>
 #include "slamcpp/Converter.h"
 #include <thread>
@@ -262,6 +268,55 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     //Initialize the Loop Closing thread and launch
     // mSensor!=MONOCULAR && mSensor!=IMU_MONOCULAR
     mpLoopCloser = new LoopClosing(mpAtlas, mpKeyFrameDatabase, mpVocabulary, mSensor!=MONOCULAR, activeLC); // mSensor!=MONOCULAR);
+#if SLAMCPP_WITH_SUPERPOINT
+    // The two optional learned components. Both are off unless a model path is
+    // given, and both are skipped without complaint if the file will not load,
+    // so a settings file that names them still works on a machine that does
+    // not have the weights.
+    {
+        cv::FileNode lgNode = fsSettings["LightGlue.model_path"];
+        if(!lgNode.empty() && lgNode.isString())
+        {
+            const string path = (string)lgNode;
+            bool fp16 = false;
+            cv::FileNode fp16Node = fsSettings["LightGlue.useFP16"];
+            if(!fp16Node.empty())
+                fp16 = (int)fp16Node != 0;
+
+            auto pLightGlue = std::make_shared<LightGlue>(path, true, fp16);
+            if(pLightGlue->isLoaded())
+            {
+                ORBmatcher::SetLightGlue(pLightGlue);
+                cout << "LightGlue matcher loaded from " << path << endl;
+            }
+            else
+                cerr << "Could not load the LightGlue model at " << path
+                     << "; falling back to descriptor matching" << endl;
+        }
+
+        cv::FileNode prNode = fsSettings["PlaceRecognition.model_path"];
+        if(!prNode.empty() && prNode.isString())
+        {
+            const string path = (string)prNode;
+            bool fp16 = false;
+            cv::FileNode fp16Node = fsSettings["PlaceRecognition.useFP16"];
+            if(!fp16Node.empty())
+                fp16 = (int)fp16Node != 0;
+
+            auto pPlaceRecognition = std::make_shared<PlaceRecognition>(path, true, fp16);
+            if(pPlaceRecognition->isLoaded())
+            {
+                mpPlaceRecognition = pPlaceRecognition;
+                mpLoopCloser->SetPlaceRecognition(pPlaceRecognition);
+                cout << "Place recognition model loaded from " << path << endl;
+            }
+            else
+                cerr << "Could not load the place recognition model at " << path
+                     << "; loop detection stays on bag of words" << endl;
+        }
+    }
+#endif
+
     mptLoopClosing = new thread(&ORB_SLAM3::LoopClosing::Run, mpLoopCloser);
 
     //Set pointers between threads

@@ -19,6 +19,10 @@
 
 #include "slamcpp/Tracking.h"
 
+#include <stdexcept>
+
+#include "slamcpp/features/FeatureFactory.h"
+
 #include "slamcpp/ORBmatcher.h"
 #include "slamcpp/FrameDrawer.h"
 #include "slamcpp/Converter.h"
@@ -48,6 +52,34 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     mpFrameDrawer(pFrameDrawer), mpMapDrawer(pMapDrawer), mpAtlas(pAtlas), mnLastRelocFrameId(0), time_recently_lost(5.0),
     mnInitialFrameId(0), mbCreatedMap(false), mnFirstFrameId(0), mpCamera2(nullptr), mpLastKeyFrame(static_cast<KeyFrame*>(NULL))
 {
+    // Which feature front-end to run. Read straight from the file so that it
+    // works for both the 1.0 settings path and the legacy one, and decided
+    // before either builds an extractor.
+    {
+        cv::FileStorage fSettings(strSettingPath, cv::FileStorage::READ);
+        if(fSettings.isOpened())
+        {
+            cv::FileNode node = fSettings["Frontend.type"];
+            if(!node.empty() && node.isString())
+                mFrontendType = ParseFrontendType((string)node);
+
+            node = fSettings["Frontend.modelPath"];
+            if(!node.empty() && node.isString())
+                mFrontendModelPath = (string)node;
+        }
+    }
+
+    if(!FrontendAvailable(mFrontendType))
+    {
+        throw std::runtime_error(
+            std::string("slamcpp: front-end '") + FrontendTypeName(mFrontendType) +
+            "' is not available in this build");
+    }
+
+    // The matcher's distance and thresholds follow the descriptor.
+    ORBmatcher::ConfigureFor(FrontendDescriptorType(mFrontendType));
+    cout << "Feature front-end: " << FrontendTypeName(mFrontendType) << endl;
+
     // Load camera parameters from settings file
     if(settings){
         newParameterLoader(settings);
@@ -592,13 +624,13 @@ void Tracking::newParameterLoader(Settings *settings) {
     int fMinThFAST = settings->minThFAST();
     float fScaleFactor = settings->scaleFactor();
 
-    mpORBextractorLeft = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+    mpORBextractorLeft = CreateFeatureExtractor(mFrontendType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mFrontendModelPath);
 
     if(mSensor==System::STEREO || mSensor==System::IMU_STEREO)
-        mpORBextractorRight = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+        mpORBextractorRight = CreateFeatureExtractor(mFrontendType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mFrontendModelPath);
 
     if(mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR)
-        mpIniORBextractor = new ORBextractor(5*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+        mpIniORBextractor = CreateFeatureExtractor(mFrontendType,5*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mFrontendModelPath);
 
     //IMU parameters
     Sophus::SE3f Tbc = settings->Tbc();
@@ -1280,13 +1312,13 @@ bool Tracking::ParseORBParamFile(cv::FileStorage &fSettings)
         return false;
     }
 
-    mpORBextractorLeft = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+    mpORBextractorLeft = CreateFeatureExtractor(mFrontendType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mFrontendModelPath);
 
     if(mSensor==System::STEREO || mSensor==System::IMU_STEREO)
-        mpORBextractorRight = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+        mpORBextractorRight = CreateFeatureExtractor(mFrontendType,nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mFrontendModelPath);
 
     if(mSensor==System::MONOCULAR || mSensor==System::IMU_MONOCULAR)
-        mpIniORBextractor = new ORBextractor(5*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+        mpIniORBextractor = CreateFeatureExtractor(mFrontendType,5*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST,mFrontendModelPath);
 
     cout << endl << "ORB Extractor Parameters: " << endl;
     cout << "- Number of Features: " << nFeatures << endl;

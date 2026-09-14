@@ -42,6 +42,8 @@
 namespace ORB_SLAM3
 {
 
+class PlaceRecognition;
+
 class Verbose
 {
 public:
@@ -224,6 +226,10 @@ private:
     // one used for writing, so a session can read a binary atlas and export it
     // as text or XML.
     int mAtlasFileType = BINARY_FILE;
+
+    // Held so it outlives the loop closer that borrows it. Null unless a
+    // PlaceRecognition.model_path was given and loaded.
+    std::shared_ptr<PlaceRecognition> mpPlaceRecognition;
     int mAtlasSaveFileType = BINARY_FILE;
 
     // Tracker. It receives a frame and computes the associated camera pose.

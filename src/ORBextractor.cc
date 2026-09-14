@@ -408,9 +408,15 @@ namespace ORB_SLAM3
 
     ORBextractor::ORBextractor(int _nfeatures, float _scaleFactor, int _nlevels,
                                int _iniThFAST, int _minThFAST):
-            nfeatures(_nfeatures), scaleFactor(_scaleFactor), nlevels(_nlevels),
             iniThFAST(_iniThFAST), minThFAST(_minThFAST)
     {
+        // Assigned rather than listed: these three now belong to
+        // FeatureExtractor, and a member initialiser list cannot reach a base
+        // class's fields.
+        nfeatures = _nfeatures;
+        scaleFactor = _scaleFactor;
+        nlevels = _nlevels;
+
         mvScaleFactor.resize(nlevels);
         mvLevelSigma2.resize(nlevels);
         mvScaleFactor[0]=1.0f;

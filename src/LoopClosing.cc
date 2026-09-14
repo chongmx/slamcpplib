@@ -19,6 +19,10 @@
 
 #include "slamcpp/LoopClosing.h"
 
+#if SLAMCPP_WITH_SUPERPOINT
+#include "slamcpp/features/PlaceRecognition.h"
+#endif
+
 #include "slamcpp/Sim3Solver.h"
 #include "slamcpp/Converter.h"
 #include "slamcpp/Optimizer.h"
@@ -31,6 +35,12 @@
 
 namespace ORB_SLAM3
 {
+
+void LoopClosing::SetPlaceRecognition(std::shared_ptr<PlaceRecognition> pPlaceRecognition)
+{
+    mpPlaceRecognition = pPlaceRecognition;
+}
+
 
 LoopClosing::LoopClosing(Atlas *pAtlas, KeyFrameDatabase *pDB, ORBVocabulary *pVoc, const bool bFixScale, const bool bActiveLC):
     mbResetRequested(false), mbResetActiveMapRequested(false), mbFinishRequested(false), mbFinished(true), mpAtlas(pAtlas),
@@ -489,6 +499,31 @@ bool LoopClosing::NewDetectCommonRegions()
         std::chrono::steady_clock::time_point time_StartQuery = std::chrono::steady_clock::now();
 #endif
         mpKeyFrameDB->DetectNBestCandidates(mpCurrentKF, vpLoopBowCand, vpMergeBowCand,3);
+
+#if SLAMCPP_WITH_SUPERPOINT
+        // A learned place recogniser, when one is loaded, contributes extra
+        // candidates. They are appended rather than substituted: the two
+        // recall the same loops differently, and a bag-of-words hit the
+        // network misses is still worth checking.
+        if(mpPlaceRecognition && mpPlaceRecognition->isLoaded())
+        {
+            const std::set<KeyFrame*> spConnected = mpCurrentKF->GetConnectedKeyFrames();
+            const std::vector<KeyFrame*> vpLearned =
+                mpPlaceRecognition->queryStored(mpCurrentKF, 5, spConnected);
+
+            Map* pCurrentMap = mpCurrentKF->GetMap();
+            for(KeyFrame* pKFi : vpLearned)
+            {
+                if(!pKFi || pKFi->isBad())
+                    continue;
+
+                std::vector<KeyFrame*>& target =
+                    (pKFi->GetMap() == pCurrentMap) ? vpLoopBowCand : vpMergeBowCand;
+                if(std::find(target.begin(), target.end(), pKFi) == target.end())
+                    target.push_back(pKFi);
+            }
+        }
+#endif
 #ifdef REGISTER_TIMES
         std::chrono::steady_clock::time_point time_EndQuery = std::chrono::steady_clock::now();
 

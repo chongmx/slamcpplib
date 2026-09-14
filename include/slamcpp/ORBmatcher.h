@@ -30,8 +30,12 @@
 #include "slamcpp/Frame.h"
 
 
+#include <memory>
+
 namespace ORB_SLAM3
 {
+
+class LightGlue;
 
     class ORBmatcher
     {
@@ -40,7 +44,24 @@ namespace ORB_SLAM3
         ORBmatcher(float nnratio=0.6, bool checkOri=true);
 
         // Computes the Hamming distance between two ORB descriptors
-        static int DescriptorDistance(const cv::Mat &a, const cv::Mat &b);
+        // Float, and dispatched on the descriptor type at run time: a binary
+        // ORB descriptor is compared with a Hamming distance, a float
+        // SuperPoint one with an L2 norm. The two live on different scales,
+        // which is why the thresholds below are set from the front-end rather
+        // than being compile-time constants.
+        static float DescriptorDistance(const cv::Mat &a, const cv::Mat &b);
+
+        // Points the thresholds at the descriptor the active front-end emits.
+        // Called once when Tracking builds its extractor.
+        static void ConfigureFor(int descriptorType);
+
+        // LightGlue is an optional learned matcher for float descriptors. When
+        // one is installed it replaces the brute-force search in the two places
+        // that benefit most, monocular initialisation and triangulation between
+        // key frames; everything else keeps the classic path. Left unset, which
+        // is the default, nothing changes.
+        static void SetLightGlue(std::shared_ptr<LightGlue> pLightGlue);
+        static std::shared_ptr<LightGlue> GetLightGlue();
 
         // Search matches between Frame keypoints and projected MapPoints. Returns number of matches
         // Used to track the local map (Tracking)
@@ -52,7 +73,7 @@ namespace ORB_SLAM3
 
         // Project MapPoints seen in KeyFrame into the Frame and search matches.
         // Used in relocalisation (Tracking)
-        int SearchByProjection(Frame &CurrentFrame, KeyFrame* pKF, const std::set<MapPoint*> &sAlreadyFound, const float th, const int ORBdist);
+        int SearchByProjection(Frame &CurrentFrame, KeyFrame* pKF, const std::set<MapPoint*> &sAlreadyFound, const float th, const float ORBdist);
 
         // Project MapPoints using a Similarity Transformation and search matches.
         // Used in loop detection (Loop Closing)
@@ -88,8 +109,10 @@ namespace ORB_SLAM3
 
     public:
 
-        static const int TH_LOW;
-        static const int TH_HIGH;
+        static std::shared_ptr<LightGlue> mpLightGlue;
+
+        static float TH_LOW;
+        static float TH_HIGH;
         static const int HISTO_LENGTH;
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 

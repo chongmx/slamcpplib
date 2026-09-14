@@ -24,23 +24,13 @@
 #include <opencv2/opencv.hpp>
 
 
+#include "slamcpp/features/ExtractorNode.h"
+#include "slamcpp/features/FeatureExtractor.h"
+
 namespace ORB_SLAM3
 {
 
-class ExtractorNode
-{
-public:
-    ExtractorNode():bNoMore(false){}
-
-    void DivideNode(ExtractorNode &n1, ExtractorNode &n2, ExtractorNode &n3, ExtractorNode &n4);
-
-    std::vector<cv::KeyPoint> vKeys;
-    cv::Point2i UL, UR, BL, BR;
-    std::list<ExtractorNode>::iterator lit;
-    bool bNoMore;
-};
-
-class ORBextractor
+class ORBextractor : public FeatureExtractor
 {
 public:
     
@@ -56,31 +46,13 @@ public:
     // Mask is ignored in the current implementation.
     int operator()( cv::InputArray _image, cv::InputArray _mask,
                     std::vector<cv::KeyPoint>& _keypoints,
-                    cv::OutputArray _descriptors, std::vector<int> &vLappingArea);
+                    cv::OutputArray _descriptors, std::vector<int> &vLappingArea) override;
 
-    int inline GetLevels(){
-        return nlevels;}
+    // 32 bytes of binary descriptor, compared with a Hamming distance.
+    int descriptorType() const override { return CV_8U; }
+    const char* name() const override { return "ORB"; }
 
-    float inline GetScaleFactor(){
-        return scaleFactor;}
-
-    std::vector<float> inline GetScaleFactors(){
-        return mvScaleFactor;
-    }
-
-    std::vector<float> inline GetInverseScaleFactors(){
-        return mvInvScaleFactor;
-    }
-
-    std::vector<float> inline GetScaleSigmaSquares(){
-        return mvLevelSigma2;
-    }
-
-    std::vector<float> inline GetInverseScaleSigmaSquares(){
-        return mvInvLevelSigma2;
-    }
-
-    std::vector<cv::Mat> mvImagePyramid;
+    // The scale pyramid, its factors and their getters live in the base.
 
 protected:
 
@@ -92,9 +64,6 @@ protected:
     void ComputeKeyPointsOld(std::vector<std::vector<cv::KeyPoint> >& allKeypoints);
     std::vector<cv::Point> pattern;
 
-    int nfeatures;
-    double scaleFactor;
-    int nlevels;
     int iniThFAST;
     int minThFAST;
 
@@ -102,10 +71,6 @@ protected:
 
     std::vector<int> umax;
 
-    std::vector<float> mvScaleFactor;
-    std::vector<float> mvInvScaleFactor;    
-    std::vector<float> mvLevelSigma2;
-    std::vector<float> mvInvLevelSigma2;
 };
 
 } //namespace ORB_SLAM
